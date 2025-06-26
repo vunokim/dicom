@@ -6,6 +6,15 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import wfdb
 import numpy as np
+from scipy.signal import butter, filtfilt
+
+
+def bandpass_filter(signal, lowcut, highcut, fs, order=3):
+    nyquist = 0.5 * fs
+    low = lowcut / nyquist
+    high = highcut / nyquist
+    b, a = butter(order, [low, high], btype='band')
+    return filtfilt(b, a, signal, axis=0)
 
 
 class DropCanvas(FigureCanvas):
@@ -30,6 +39,7 @@ class ECGViewer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ECG Viewer (PTB-XL)")
+        self.current_path = None
         self.setGeometry(100, 100, 1600, 1200)
 
         # 메인 위젯 설정
@@ -62,8 +72,13 @@ class ECGViewer(QMainWindow):
             self.load_and_plot(base_path)
 
     def load_and_plot(self, base_path):
+        self.current_path = base_path
+        filename = os.path.basename(base_path)
+        self.setWindowTitle(f"ECG Viewer (PTB-XL) - {filename}")
         try:
             signal, fields = wfdb.rdsamp(base_path)
+            fs = fields['fs']
+            signal = bandpass_filter(signal, 0.5, 40, fs)
             print("리드 목록:", fields['sig_name'])  # 디버그 출력
             self.plot_ecg(signal, fields)
         except Exception as e:
@@ -77,7 +92,6 @@ class ECGViewer(QMainWindow):
         time_short = np.arange(short_duration) / fs
         time_long = np.arange(long_duration) / fs
 
-        # 출력할 순서대로 정확히 구성
         layout_order = [
             'I', 'aVR', 'V1', 'V4',
             'II', 'aVL', 'V2', 'V5',
@@ -90,7 +104,6 @@ class ECGViewer(QMainWindow):
         sec_per_mm = 0.04  # 25mm/s
         mv_per_mm = 0.1    # 10mm/mV
 
-        # 3행 4열 출력
         for i, lead in enumerate(valid_leads):
             idx = lead_indices[lead.upper()]
             ax = self.figure.add_subplot(4, 4, i + 1)
@@ -108,7 +121,6 @@ class ECGViewer(QMainWindow):
             ax.grid(True, which='major', linestyle='--', linewidth=0.5)
             ax.grid(True, which='minor', linestyle=':', linewidth=0.3, color='gray')
 
-        # 마지막 줄 전체 폭으로 II 리드 출력 (긴 시간)
         if 'II' in lead_indices:
             ax = self.figure.add_subplot(4, 1, 4)
             idx = lead_indices['II']
@@ -126,7 +138,6 @@ class ECGViewer(QMainWindow):
             ax.grid(True, which='major', linestyle='--', linewidth=0.5)
             ax.grid(True, which='minor', linestyle=':', linewidth=0.3, color='gray')
 
-        # 안내 텍스트 제거 후 다시 그리기
         try:
             self.figure.texts.remove(self.canvas_text)
         except ValueError:
