@@ -110,20 +110,25 @@ def modify_dicom_tags():
 
             for group, element, vr, new_value in tag_values:
                 tag = Tag(group, element)
-                if tag in dicom:
-                    try:
-                        dicom[tag].value = new_value
-                    except Exception as e:
-                        messagebox.showerror("Error", f"Error modifying tag {tag}: {e}")
-                else:
-                    if vr == "Same":
-                        messagebox.showerror("Error", f"Tag {tag} does not exist and VR is not specified.")
-                        continue
-                    try:
-                        elem = DataElement(tag, vr, new_value)
+
+                try:
+                    if tag == Tag(0x0010, 0x0010):  # Patient's Name
+                        # 일본어 입력을 위해 charset 지정
+                        dicom.SpecificCharacterSet = ['ISO 2022 IR 100', 'ISO 2022 IR 13', 'ISO 2022 IR 87']
+                        value = new_value  # str 그대로 사용하면 됨
+                    else:
+                        value = new_value
+
+                    if tag in dicom:
+                        dicom[tag].value = value
+                    else:
+                        if vr == "Same":
+                            messagebox.showerror("Error", f"Tag {tag} does not exist and VR is not specified.")
+                            continue
+                        elem = DataElement(tag, vr, value)
                         dicom.add(elem)
-                    except Exception as e:
-                        messagebox.showerror("Error", f"Error adding tag {tag}: {e}")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Error processing tag {tag}: {e}")
 
             output_path = os.path.join(output_folder, filename)
             try:
