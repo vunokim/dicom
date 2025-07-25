@@ -30,5 +30,5 @@ def modify_dicom_tags_in_folder(folder_path):
                 print(f"❌ 오류 발생 ({filename}): {e}")
 
 # 사용 예시
-folder_path = "D:\\chestxray_sample\\kaggle\\PneumothoraxMasks\\siim-acr-pneumothorax\\test\\111"
+folder_path = "D:\\chestxray_sample\\kaggle\\PneumothoraxMasks\\siim-acr-pneumothorax\\test\\dcm"
 modify_dicom_tags_in_folder(folder_path)

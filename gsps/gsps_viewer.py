@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QFont, QCursor
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from colormath.color_objects import LabColor, sRGBColor
@@ -216,6 +217,7 @@ class DicomGspsViewer(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon("D:\github\\dicom\\gsps\\document-viewer.ico"))
     viewer = DicomGspsViewer()
     viewer.show()
     sys.exit(app.exec_())
