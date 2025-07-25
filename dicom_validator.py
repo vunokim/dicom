@@ -10,7 +10,7 @@ class DICOMValidatorGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DICOM Validator GUI")
-        self.setGeometry(200, 200, 700, 500)
+        self.setGeometry(200, 200, 700, 700)
         self.setAcceptDrops(True)
 
         # Widgets
@@ -68,9 +68,24 @@ class DICOMValidatorGUI(QWidget):
             cmd.append("--suppress-vr-warnings")
 
         self.textbox.setText("🔄 검증 중입니다...\n잠시만 기다려 주세요.")
+        QApplication.processEvents()
 
-        # 새로운 방식: 실시간 출력 처리
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+        except FileNotFoundError:
+            self.textbox.setText("❌ 'validate_iods' 명령어를 찾을 수 없습니다.\n도구가 설치되어 있는지 확인하세요.")
+            return
+        except PermissionError:
+            self.textbox.setText("❌ 권한 오류: 'validate_iods' 또는 DICOM 파일에 접근할 수 없습니다.")
+            return
+        except Exception as e:
+            self.textbox.setText(f"❌ 알 수 없는 오류 발생: {str(e)}")
+            return
 
         output = ""
         while True:
@@ -79,11 +94,19 @@ class DICOMValidatorGUI(QWidget):
                 break
             output += line
             self.textbox.setText(output)
-            QApplication.processEvents()  # GUI 업데이트
+            QApplication.processEvents()
 
         process.wait()
+
         if process.returncode != 0:
-            self.textbox.append("\n❌ 오류가 발생했습니다.")
+            # 오류 내용을 분석하여 상세 메시지 제공
+            if "Invalid DICOM" in output or "not a valid" in output.lower():
+                self.textbox.append("\n❌ 유효하지 않은 DICOM 파일입니다.")
+            elif "Permission denied" in output:
+                self.textbox.append("\n❌ 파일 접근 권한이 없습니다.")
+            else:
+                self.textbox.append("\n❌ 검증 중 오류가 발생했습니다. 출력 내용을 확인하세요.")
+
 
 if __name__ == "__main__":
     app = QApplication([])
