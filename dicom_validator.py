@@ -75,7 +75,9 @@ class DICOMValidatorGUI(QWidget):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True
+                text=True,
+                encoding='utf-8',
+                errors='replace'
             )
         except FileNotFoundError:
             self.textbox.setText("❌ 'validate_iods' 명령어를 찾을 수 없습니다.\n도구가 설치되어 있는지 확인하세요.")
