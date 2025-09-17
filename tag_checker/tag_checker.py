@@ -47,7 +47,25 @@ def is_valid_date(value):
 def is_valid_time(value):
     if not value or not isinstance(value, str):
         return False
-    return bool(re.match(r"^[0-2][0-9][0-5][0-9][0-5][0-9]$", value))
+    # HHMMSS 또는 HHMMSS.FFFFFF 형식 확인
+    pattern = r"^[0-2][0-9][0-5][0-9][0-5][0-9](\.\d{1,6})?$"
+    if not re.match(pattern, value):
+        return False
+    # 시간 값이 유효한지 확인 (HH: 00~23, MM: 00~59, SS: 00~59)
+    try:
+        hours = int(value[:2])
+        minutes = int(value[2:4])
+        seconds = int(value[4:6])
+        if not (0 <= hours <= 23 and 0 <= minutes <= 59 and 0 <= seconds <= 59):
+            return False
+        # 소수점 이하 마이크로초가 있는 경우, 0~999999 사이인지 확인
+        if '.' in value:
+            micro = int(value.split('.')[1])
+            if not (0 <= micro <= 999999):
+                return False
+        return True
+    except ValueError:
+        return False
 
 def status_color(ok):
     return QColor("#a8f28a") if ok else QColor("#f28a8c")
@@ -184,10 +202,18 @@ class TagStatusEvaluator:
         except json.JSONDecodeError:
             return False, "Fail"
 
+    @classmethod
+    def evaluate_study_description(cls, value):
+        return True, "OK"  # 값이 비어 있어도 OK
+
+    @classmethod
+    def evaluate_series_description(cls, value):
+        return value == "VUNO Med Analysis Result", "OK" if value == "VUNO Med Analysis Result" else "Fail"
+
 class TagCheckerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setGeometry(100, 100, 1520, 1000)
+        self.setGeometry(100, 100, 1520, 1100)
         self.setAcceptDrops(True)
 
         self.central = QWidget()
@@ -266,16 +292,18 @@ class TagCheckerApp(QMainWindow):
             (Tag(0x0008, 0x0013), "Instance Creation Time", TagStatusEvaluator.evaluate_time),
             (Tag(0x0008, 0x0018), "SOP Instance UID", TagStatusEvaluator.evaluate_sop_instance_uid),
             (Tag(0x0020, 0x0013), "Instance Number", TagStatusEvaluator.evaluate_instance_number),
-            (Tag(0x0020, 0x4000), "Image Comments", lambda v: (bool(v), "OK" if v else "Fail"))
+            (Tag(0x0020, 0x4000), "Image Comments", lambda v: (bool(v), "OK" if v else "Fail")),
+            (Tag(0x0008, 0x1030), "Study Description", TagStatusEvaluator.evaluate_study_description),
+            (Tag(0x0008, 0x103E), "Series Description", TagStatusEvaluator.evaluate_series_description),
         ]
 
         private_tag_map = [
             (Tag(0x1001, 0x1002), "Private Version", TagStatusEvaluator.evaluate_version),
             (Tag(0x1001, 0x1004), "Private Flag 0/1", lambda v: (v in ["0", "1"], "OK" if v in ["0", "1"] else "Fail")),
             (Tag(0x1001, 0x1005), "Private Flag 1", lambda v: (v == "1", "OK" if v == "1" else "Fail")),
-            (Tag(0x1001, 0x1008), "Private Report", lambda v: TagStatusEvaluator.evaluate_private_json_prefix(v, ['{"report":"'])),
+            (Tag(0x1001, 0x1008), "Private Report", lambda v: TagStatusEvaluator.evaluate_private_json_prefix(v, ['{"report": "','{"report":"'])),
             (Tag(0x1001, 0x1009), "Private Type", lambda v: TagStatusEvaluator.evaluate_private_1009(model, v)),
-            (Tag(0x1001, 0x1011), "Private Report/RADS", lambda v: TagStatusEvaluator.evaluate_private_json_prefix(v, ['{"result":"', '{"case_lung_RADS":"'])),
+            (Tag(0x1001, 0x1011), "Private Report/RADS", lambda v: TagStatusEvaluator.evaluate_private_json_prefix(v, ['{"result": "','{"result":"', '{"case_lung_RADS":"'])),
             (Tag(0x1001, 0x1015), "Private JSON", lambda v: TagStatusEvaluator.evaluate_json(v, model)),
         ]
 
