@@ -89,7 +89,7 @@ class DICOMTagSearcher(QMainWindow):
 
         # Value 입력 박스 (가변 너비)
         value_edit = QLineEdit()
-        value_edit.setPlaceholderText("값 (비워두면 존재 여부만 체크)")
+        value_edit.setPlaceholderText("값 (비워두면 Tag 존재 여부만 체크)")
 
         # 16진수 제한 (Group, Element)
         hex_validator = QRegExpValidator(QRegExp("[0-9A-Fa-f]*"))
@@ -130,6 +130,17 @@ class DICOMTagSearcher(QMainWindow):
 
     def index_dicom_files(self):
         search_path = self.path_input.text().strip()
+
+        # 1️⃣ 태그 유효성 검사 (가장 먼저)
+        if not self.has_valid_tag_condition():
+            QMessageBox.warning(
+                self,
+                "경고",
+                "태그 ID를 입력한 후 검색을 실행하세요."
+            )
+            return
+
+        # 2️⃣ 검색 경로 유효성 검사
         if not search_path or not os.path.exists(search_path):
             QMessageBox.warning(self, "경고", "유효한 검색 경로를 입력하세요.")
             return
@@ -159,14 +170,44 @@ class DICOMTagSearcher(QMainWindow):
                 print(f"읽기 실패 {file_path}: {e}")
 
         # 팝업 후 자동 검색 실행
-        reply = QMessageBox.information(
+        QMessageBox.information(
             self, "인덱싱 완료",
-            f"{len(files)}개 DICOM 파일 인덱싱 완료!\n\n"
-            f"태그를 입력하고 [검색 시작]을 다시 누르세요.",
-            QMessageBox.Ok
+            f"{len(files)}개 DICOM 파일 인덱싱 완료!"
         )
-        if reply == QMessageBox.Ok:
+
+        # ✅ 태그가 있을 때만 자동 검색
+        if self.has_valid_tag_condition():
             self.search_and_display()
+
+    def has_valid_tag_condition(self):
+        for _, group_edit, elem_edit, _ in self.tag_widgets:
+            g = group_edit.text().strip()
+            e = elem_edit.text().strip()
+            if g and e and len(g) == 4 and len(e) == 4:
+                return True
+        return False
+
+    def value_matches(self, stored_value, query_value):
+        """
+        SQL LIKE 스타일 비교
+        *1234  → endswith
+        1234*  → startswith
+        *1234* → contains
+        1234   → exact match
+        """
+        if not query_value:
+            return True
+
+        if query_value.startswith("*") and query_value.endswith("*"):
+            return query_value.strip("*") in stored_value
+
+        if query_value.startswith("*"):
+            return stored_value.endswith(query_value.lstrip("*"))
+
+        if query_value.endswith("*"):
+            return stored_value.startswith(query_value.rstrip("*"))
+
+        return stored_value == query_value
 
     def search_and_display(self):
         conditions = []
@@ -182,7 +223,10 @@ class DICOMTagSearcher(QMainWindow):
             return
 
         is_and = self.and_radio.isChecked()
-        results = set(self.all_dicom_files)
+        if is_and:
+            results = set(self.all_dicom_files)
+        else:
+            results = set()
 
         for tag, value in conditions:
             matching_files = set()
@@ -190,7 +234,7 @@ class DICOMTagSearcher(QMainWindow):
                 file_tags = self.dicom_tag_values.get(file_path, {})
                 stored_value = file_tags.get(tag, "")
                 if value:
-                    if stored_value == value:
+                    if self.value_matches(stored_value, value):
                         matching_files.add(file_path)
                 else:
                     matching_files.add(file_path)
