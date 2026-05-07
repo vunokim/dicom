@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 import queue
 import tkinter as tk
@@ -46,6 +47,10 @@ VR_LABELS = {
     "Same": "Use existing same VR"
 }
 
+
+def get_resource_path(relative_path):
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative_path)
 
 def validate_hex_input(P):
     p = P.strip()
@@ -494,5 +499,9 @@ class DicomEditorApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    try:
+        root.iconbitmap(get_resource_path("editor.ico"))
+    except Exception:
+        pass
     app = DicomEditorApp(root)
     root.mainloop()

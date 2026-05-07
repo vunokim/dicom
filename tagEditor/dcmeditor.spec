@@ -11,6 +11,7 @@ datas += collect_data_files('gdcm')
 datas += collect_data_files('pylibjpeg')
 datas += collect_data_files('pylibjpeg-libjpeg')
 datas += collect_data_files('pylibjpeg-openjpeg')
+datas += [('editor.ico', '.')]
  
 a = Analysis(['dcmeditor.py'],
              pathex=[],
@@ -36,7 +37,7 @@ exe = EXE(pyz,
           a.zipfiles,
           a.datas,
           [],
-          exclude_binaries=True,
+          exclude_binaries=False,
           name='DICOMTagEditor',
           debug=False,
           bootloader_ignore_signals=False,
@@ -50,14 +51,4 @@ exe = EXE(pyz,
           target_arch=None,
           codesign_identity=None,
           entitlements_file=None,
-          icon=['D:\\dicom_editor\\editor.ico'],
-          onefile=True)
- 
-coll = COLLECT(exe,
-               a.binaries,
-               a.zipfiles,
-               a.datas,
-               strip=False,
-               upx=True,
-               upx_exclude=[],
-               name='DICOMTagEditor')
+          icon=['editor.ico'])
