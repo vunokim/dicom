@@ -37,10 +37,11 @@ class DicomTagLoader(QWidget):
 
     def initUI(self):
         self.setWindowTitle("DICOM Tag Loader")
-        self.setGeometry(100, 100, 960, 730)
+        self.setGeometry(100, 100, 1200, 900)
         self.setAcceptDrops(True)
         layout = QVBoxLayout()
 
+        # File Open 버튼 및 File path 표시 레이블 가로 레이아웃
         h_layout = QHBoxLayout()
         self.open_button = QPushButton("File Open", self)
         self.open_button.setFixedWidth(100)
@@ -51,6 +52,7 @@ class DicomTagLoader(QWidget):
         h_layout.addWidget(self.file_path)
         layout.addLayout(h_layout)
 
+        # 검색 및 버튼 Layout 설정
         function_layout = QHBoxLayout()
 
         self.group_input = QLineEdit()
@@ -132,35 +134,6 @@ class DicomTagLoader(QWidget):
                 current_tab_index = self.tabs.currentIndex()
                 current_tab_name = self.tabs.tabText(current_tab_index) if current_tab_index >= 0 else "All"
 
-                # Specific Character Set 설정
-                specific_charset = dicom_data.get("SpecificCharacterSet", "ISO_IR_100")
-                if isinstance(specific_charset, list):
-                    specific_charset = specific_charset[0] if specific_charset else "ISO_IR_100"
-                if isinstance(specific_charset, str):
-                    specific_charset = specific_charset.lstrip("\\")
-                if "149" in specific_charset:
-                    specific_charset = "euc_kr"
-                elif "100" in specific_charset:
-                    specific_charset = "latin1"
-                elif "192" in specific_charset or "UTF-8" in specific_charset:
-                    specific_charset = "utf-8"
-                elif "ISO 2022 IR 87" in specific_charset:
-                    specific_charset = "iso2022_jp"  # 일본어 Kanji 지원
-                else:
-                    specific_charset = "iso8859"
-
-                # Patient's Name 디코딩 시도
-                try:
-                    raw_name = dicom_data[0x0010, 0x0010].value
-                    if isinstance(raw_name, bytes):
-                        patient_name = raw_name.decode(specific_charset)
-                    else:
-                        patient_name = raw_name
-                    dicom_data.PatientName = patient_name
-                except (UnicodeDecodeError, AttributeError):
-                    print(f"Warning: Failed to decode Patient's Name with encoding {specific_charset}")
-                    dicom_data.PatientName = "Unknown"
-
                 # 탭 유지 및 내용 갱신
                 self.tabs.clear()
                 self.pixel_data_value = None
@@ -175,7 +148,7 @@ class DicomTagLoader(QWidget):
                         self.tabs.setCurrentIndex(i)
                         break
                 else:
-                    self.tabs.setCurrentIndex(0)
+                    self.tabs.setCurrentIndex(0)  # 탭 이름이 없으면 All 탭으로
 
                 # 기존 검색 필터 복원
                 self.restoreFilters()
@@ -186,53 +159,50 @@ class DicomTagLoader(QWidget):
     def addTab(self, dicom_data, tag_type):
         table = QTableWidget()
         elements = []
-        tag_values = {}  # (group, element) -> [(value, element)] 저장
 
         if tag_type == "All":
             if hasattr(dicom_data, "file_meta"):
                 for element in dicom_data.file_meta:
-                    tag_key = (element.tag.group, element.tag.element)
-                    value = str(element.value) if element.value is not None else "None"
-                    if tag_key not in tag_values:
-                        tag_values[tag_key] = []
-                    tag_values[tag_key].append((value, element))
+                    elements.append(element)
 
         if dicom_data:
-            for element in dicom_data.iterall():
-                tag_key = (element.tag.group, element.tag.element)
-                value = str(element.value) if element.value is not None else "None"
-                if tag_key not in tag_values:
-                    tag_values[tag_key] = []
-                tag_values[tag_key].append((value, element))
+            seen_tags = set()
 
-            # 동일한 value는 첫 번째 element만 추가
-            for tag_key, value_elements in tag_values.items():
-                seen_values = set()
-                for value, element in value_elements:
-                    if value not in seen_values:
-                        seen_values.add(value)
-                        if element.name in ["PixelHeight", "PixelWidth"] and element.value == 0:
-                            element.value = 1
-                            print(f"Warning: Invalid value for {element.name}. Defaulting to 1.")
-                        if tag_key == (0x7FE0, 0x0010):
-                            self.pixel_data_value = np.copy(element.value)
-                            display_value = "Encoded graphical image data"
-                        if tag_type == "All":
-                            elements.append(element)
-                        elif tag_type == "Patient" and tag_key[0] == 0x0010:
-                            elements.append(element)
-                        elif tag_type == "Study/Series" and (
-                            "Study" in element.name or "Series" in element.name
-                        ):
-                            elements.append(element)
-                        elif tag_type == "Image" and (
-                            tag_key[0] == 0x0028
-                            or "Pixel" in element.name
-                            or "Bit" in element.name
-                            or "Image" in element.name
-                            or "Window" in element.name
-                        ):
-                            elements.append(element)
+            for element in dicom_data.iterall():
+                # 최소 수정안:
+                # 기존에는 (group, element)만 같으면 뒤의 항목을 모두 숨겼습니다.
+                # 이제는 같은 tag라도 value가 다르면 별도로 보여주고,
+                # value까지 같을 때만 중복으로 간주합니다.
+                try:
+                    value_key = repr(element.value)
+                except Exception:
+                    value_key = str(element.value)
+
+                tag_key = (element.tag.group, element.tag.element, value_key)
+
+                if tag_key not in seen_tags:
+                    seen_tags.add(tag_key)
+                    if element.name in ["PixelHeight", "PixelWidth"] and element.value == 0:
+                        element.value = 1
+                        print(f"Warning: Invalid value for {element.name}. Defaulting to 1.")
+                    if element.tag.group == 0x7FE0 and element.tag.element == 0x0010:
+                        self.pixel_data_value = np.copy(element.value)
+                    if tag_type == "All":
+                        elements.append(element)
+                    elif tag_type == "Patient" and element.tag.group == 0x0010:
+                        elements.append(element)
+                    elif tag_type == "Study/Series" and (
+                        "Study" in element.name or "Series" in element.name
+                    ):
+                        elements.append(element)
+                    elif tag_type == "Image" and (
+                        element.tag.group == 0x0028
+                        or "Pixel" in element.name
+                        or "Bit" in element.name
+                        or "Image" in element.name
+                        or "Window" in element.name
+                    ):
+                        elements.append(element)
 
         elements.sort(key=lambda x: (x.tag.group, x.tag.element))
 
@@ -260,7 +230,7 @@ class DicomTagLoader(QWidget):
             if element.tag.group == 0x0010 and element.tag.element == 0x0010:
                 table.setItem(row, 5, QTableWidgetItem(str(dicom_data.PatientName)))
             elif element.tag.group == 0x7FE0 and element.tag.element == 0x0010:
-                table.setItem(row, 5, QTableWidgetItem(str(display_value)))
+                table.setItem(row, 5, QTableWidgetItem("Encoded graphical image data"))
             else:
                 table.setItem(row, 5, QTableWidgetItem(str(element.value)))
 
@@ -328,7 +298,7 @@ class DicomTagLoader(QWidget):
         if selected_row >= 0:
             for col in range(table.columnCount()):
                 item = table.item(selected_row, col)
-                if item:  # '在外' 제거, 올바른 조건문
+                if item:
                     if (
                         col == 5
                         and table.item(selected_row, 0).text().strip().upper() == "7FE0"
@@ -388,13 +358,6 @@ class DicomTagLoader(QWidget):
         self.element_input.clear()
         self.description_input.clear()
         self.filterTable()
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon("D:\\dicom_tag_loader\\tag.ico"))
-    viewer = DicomTagLoader()
-    viewer.show()
-    sys.exit(app.exec_())
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
