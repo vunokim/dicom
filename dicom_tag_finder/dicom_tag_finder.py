@@ -2,12 +2,88 @@ import sys
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QWidget,
                              QLabel, QLineEdit, QPushButton, QRadioButton, QCheckBox,
-                             QTextEdit, QGroupBox, QButtonGroup, QMessageBox)
-from PyQt5.QtCore import Qt, QRegExp
+                             QTextEdit, QGroupBox, QButtonGroup, QMessageBox, QProgressBar)
+from PyQt5.QtCore import Qt, QRegExp, QThread, pyqtSignal
 from PyQt5.QtGui import (QRegExpValidator, QIcon)
 import pydicom
 import glob
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def get_resource_path(relative_path):
+    """
+    스크립트 위치를 기준으로 리소스 파일의 절대 경로를 반환
+    (일반 실행 시와 PyInstaller 빌드 시 모두 동작)
+    """
+    try:
+        # PyInstaller로 빌드된 경우
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # 일반 Python 실행
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    return os.path.join(base_path, relative_path)
+
+
+class IndexingWorker(QThread):
+    """백그라운드에서 DICOM 파일을 인덱싱하는 워커 스레드"""
+    progress = pyqtSignal(int, str)  # progress 값, 메시지
+    finished = pyqtSignal(dict)  # 인덱싱 결과 딕셔너리
+    error = pyqtSignal(str)  # 에러 메시지
+
+    def __init__(self, files, max_workers=4):
+        super().__init__()
+        self.files = files
+        self.max_workers = max_workers
+
+    def run(self):
+        dicom_index = defaultdict(list)
+        dicom_tag_values = defaultdict(dict)
+        total_files = len(self.files)
+
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {
+                    executor.submit(self._read_dicom_file, file_path): file_path
+                    for file_path in self.files
+                }
+
+                for idx, future in enumerate(as_completed(futures)):
+                    file_path = futures[future]
+                    try:
+                        file_tags = future.result()
+                        if file_tags is not None:
+                            dicom_tag_values[file_path] = file_tags
+                            for tag in file_tags.keys():
+                                dicom_index[tag].append(file_path)
+                    except Exception as e:
+                        print(f"읽기 실패 {file_path}: {e}")
+
+                    # 진행상황 신호 발출
+                    progress_pct = int((idx + 1) / total_files * 100)
+                    self.progress.emit(progress_pct, f"{idx + 1}/{total_files} 파일 처리 중...")
+
+            self.finished.emit({
+                'dicom_index': dict(dicom_index),
+                'dicom_tag_values': dicom_tag_values,
+                'total_files': total_files
+            })
+        except Exception as e:
+            self.error.emit(f"인덱싱 중 오류 발생: {str(e)}")
+
+    def _read_dicom_file(self, file_path):
+        """단일 DICOM 파일을 읽고 태그 정보를 반환"""
+        try:
+            ds = pydicom.dcmread(file_path, stop_before_pixels=True)
+            file_tags = {}
+            for elem in ds:
+                tag = elem.tag
+                full_tag = f"{tag.group:04X},{tag.element:04X}"
+                file_tags[full_tag] = str(elem.value) if elem.value is not None else ""
+            return file_tags
+        except Exception:
+            return None
 
 
 class DICOMTagSearcher(QMainWindow):
@@ -20,6 +96,7 @@ class DICOMTagSearcher(QMainWindow):
         self.dicom_tag_values = defaultdict(dict)  # file_path: {tag: value}
         self.all_dicom_files = []
         self.tag_widgets = []  # (widget, group_edit, elem_edit, value_edit)
+        self.indexing_worker = None  # 백그라운드 워커
 
         self.init_ui()
 
@@ -64,6 +141,11 @@ class DICOMTagSearcher(QMainWindow):
         logic_layout.addWidget(self.or_radio)
         logic_group.setLayout(logic_layout)
         layout.addWidget(logic_group)
+
+        # 프로그레스 바 (숨김 상태)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
 
         # 결과 출력
         self.result_text = QTextEdit()
@@ -152,32 +234,52 @@ class DICOMTagSearcher(QMainWindow):
             QMessageBox.information(self, "정보", "DICOM 파일을 찾을 수 없습니다.")
             return
 
-        self.dicom_index.clear()
-        self.dicom_tag_values.clear()
-        self.all_dicom_files = files
+        # 이전 워커 종료
+        if self.indexing_worker and self.indexing_worker.isRunning():
+            self.indexing_worker.quit()
+            self.indexing_worker.wait()
 
-        for file_path in files:
-            try:
-                ds = pydicom.dcmread(file_path, stop_before_pixels=True)
-                file_tags = {}
-                for elem in ds:
-                    tag = elem.tag
-                    full_tag = f"{tag.group:04X},{tag.element:04X}"
-                    file_tags[full_tag] = str(elem.value) if elem.value is not None else ""
-                    self.dicom_index[full_tag].append(file_path)
-                self.dicom_tag_values[file_path] = file_tags
-            except Exception as e:
-                print(f"읽기 실패 {file_path}: {e}")
+        # UI 상태 업데이트
+        self.index_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
 
-        # 팝업 후 자동 검색 실행
+        # 백그라운드 워커 시작
+        self.indexing_worker = IndexingWorker(files)
+        self.indexing_worker.progress.connect(self._on_indexing_progress)
+        self.indexing_worker.finished.connect(self._on_indexing_finished)
+        self.indexing_worker.error.connect(self._on_indexing_error)
+        self.indexing_worker.start()
+
+    def _on_indexing_progress(self, value, message):
+        """인덱싱 진행상황 업데이트"""
+        self.progress_bar.setValue(value)
+        self.result_text.setText(f"인덱싱 중...\n{message}")
+
+    def _on_indexing_finished(self, result):
+        """인덱싱 완료 처리"""
+        self.dicom_index = defaultdict(list, result['dicom_index'])
+        self.dicom_tag_values = result['dicom_tag_values']
+        self.all_dicom_files = list(result['dicom_tag_values'].keys())
+
+        # UI 상태 복구
+        self.index_btn.setEnabled(True)
+        self.progress_bar.setVisible(False)
+
         QMessageBox.information(
             self, "인덱싱 완료",
-            f"{len(files)}개 DICOM 파일 인덱싱 완료!"
+            f"{result['total_files']}개 DICOM 파일 인덱싱 완료!"
         )
 
-        # ✅ 태그가 있을 때만 자동 검색
+        # 태그가 있을 때만 자동 검색
         if self.has_valid_tag_condition():
             self.search_and_display()
+
+    def _on_indexing_error(self, error_msg):
+        """인덱싱 에러 처리"""
+        self.index_btn.setEnabled(True)
+        self.progress_bar.setVisible(False)
+        QMessageBox.critical(self, "에러", error_msg)
 
     def has_valid_tag_condition(self):
         for _, group_edit, elem_edit, _ in self.tag_widgets:
@@ -223,6 +325,11 @@ class DICOMTagSearcher(QMainWindow):
             return
 
         is_and = self.and_radio.isChecked()
+
+        # AND 검색 최적화: 가장 적은 파일을 가진 조건부터 처리
+        if is_and:
+            conditions.sort(key=lambda x: len(self.dicom_index.get(x[0], [])))
+
         if is_and:
             results = set(self.all_dicom_files)
         else:
@@ -243,7 +350,9 @@ class DICOMTagSearcher(QMainWindow):
                 results = results.intersection(matching_files)
             else:
                 results = results.union(matching_files)
-            if not results:
+
+            # AND 검색에서 결과가 없으면 즉시 종료
+            if is_and and not results:
                 break
 
         # 결과 출력
@@ -268,7 +377,9 @@ class DICOMTagSearcher(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon("D:\github\\dicom\\dicom_tag_finder\\searcher.ico"))
+    icon_path = get_resource_path("searcher.ico")
+    app.setWindowIcon(QIcon(icon_path))
     window = DICOMTagSearcher()
+    window.setWindowIcon(QIcon(icon_path))  # 메인 윈도우에도 아이콘 설정
     window.show()
     sys.exit(app.exec_())
