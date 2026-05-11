@@ -1,3 +1,4 @@
+import os
 import sys
 import pydicom
 from PyQt5.QtWidgets import (
@@ -23,6 +24,12 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtGui import QIcon
 import numpy as np
 from pydicom.misc import is_dicom
+
+def get_resource_path(filename):
+    """Return the absolute path to a resource, supporting PyInstaller bundles."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.join(os.path.dirname(__file__), filename)
 
 class DicomTagLoader(QWidget):
     def __init__(self):
@@ -268,48 +275,48 @@ class DicomTagLoader(QWidget):
                 self, "Error", "The dropped content is not a valid file."
             )
 
-    def copyValue(self, table):
-        selected_row = table.currentRow()
-        clipboard = QApplication.clipboard()
+    def _get_row_data(self, table, selected_row, columns=None):
+        """
+        행 데이터를 가져옴
+        columns=None: 모든 열 복사
+        columns=정수: 해당 열만 복사
+        """
         row_data = []
-        if selected_row >= 0:
-            group_item = table.item(selected_row, 0)
-            element_item = table.item(selected_row, 1)
-            if (
-                group_item
-                and element_item
-                and group_item.text().strip().upper() == "7FE0"
-                and element_item.text().strip().upper() == "0010"
-            ):
-                row_data.append(np.array2string(self.pixel_data_value))
-            else:
-                item = table.item(selected_row, 5)
-                if item:
+
+        if columns is None:
+            cols_to_copy = range(table.columnCount())
+        else:
+            cols_to_copy = [columns]
+
+        for col in cols_to_copy:
+            item = table.item(selected_row, col)
+            if item:
+                # PixelData (0x7FE0, 0x0010) 특수처리
+                if (col == 5 and
+                    table.item(selected_row, 0).text().strip().upper() == "7FE0" and
+                    table.item(selected_row, 1).text().strip().upper() == "0010"):
+                    row_data.append(np.array2string(self.pixel_data_value))
+                else:
                     row_data.append(item.text())
-            clipboard.setText("\t".join(row_data))
+
+        return row_data
+
+    def copyValue(self, table):
+        """선택된 행의 Value 열(column 5)만 복사"""
+        selected_row = table.currentRow()
+        if selected_row >= 0:
+            row_data = self._get_row_data(table, selected_row, columns=5)
+            QApplication.clipboard().setText("\t".join(row_data))
         else:
             print("No row selected.")
 
     def copyAll(self):
+        """선택된 행의 모든 열 복사"""
         table = self.tabs.currentWidget()
         selected_row = table.currentRow()
-        clipboard = QApplication.clipboard()
-        row_data = []
         if selected_row >= 0:
-            for col in range(table.columnCount()):
-                item = table.item(selected_row, col)
-                if item:
-                    if (
-                        col == 5
-                        and table.item(selected_row, 0).text().strip().upper() == "7FE0"
-                        and table.item(selected_row, 1).text().strip().upper() == "0010"
-                    ):
-                        row_data.append(
-                            np.array2string(self.pixel_data_value)
-                        )
-                    else:
-                        row_data.append(item.text())
-            clipboard.setText("\t".join(row_data))
+            row_data = self._get_row_data(table, selected_row)  # columns=None
+            QApplication.clipboard().setText("\t".join(row_data))
         else:
             print("No row selected.")
 
@@ -361,7 +368,8 @@ class DicomTagLoader(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon("D:\\github\\dicom\\tagLoader\\tag.ico"))
+    icon_path = get_resource_path("tag.ico")
+    app.setWindowIcon(QIcon(icon_path))
     viewer = DicomTagLoader()
     viewer.show()
     sys.exit(app.exec_())
